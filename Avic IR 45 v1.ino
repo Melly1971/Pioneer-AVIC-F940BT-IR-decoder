@@ -1,5 +1,5 @@
 /*
-   IR NEC protocol reader (38kHz, TSOPxxx) and 8 pin out for Pioneer AVIC-F940BT car stereo and Pioneer remote controller.
+   IR NEC protocol reader (38kHz, TSOP1738) and 8 pin out for Pioneer AVIC-F940BT car stereo and Pioneer remote controller.
    ATtiny45, MCU Settings: FUSE_L=0xE4, FUSE_H=0xDF, FUSE_E=0xFF, F_CPU=8MHz internal 14CK+65 ms
 */
 
@@ -21,7 +21,7 @@
 #define BPort PB3    //  BXX1XXX
 #define CPort PB4    //  BX1XXXX
 #define ShiftPort PB1    // connected to ring of 3.5mm jack and GND BXXXX1X   
-#define Inhibit4051 PB0 // PB0 inhibit 4051 BXXXXX1
+#define Inhibit4051 PB0 // PB0 inhibit CD4051 BXXXXX1
 
 #define IrInPin PB2  // TSOP1338 out to pin PB2 INT0
 
@@ -207,7 +207,7 @@ void OutPort(boolean bitC, boolean bitB, boolean bitA, boolean bitShift)  // out
   if (bitB) PORTB |= _BV(BPort);
   if (bitA) PORTB |= _BV(APort);
   if (bitShift) PORTB |= _BV(ShiftPort); 
-  PORTB &= ~(_BV(Inhibit4051));
+  PORTB &= ~(_BV(Inhibit4051)); // inhibit CD4051 to LOW
 
   OutPortFlag = true;
   OffCounter = 0;
@@ -229,7 +229,7 @@ ISR(TIMER0_COMPA_vect) {
 void setup() {
   
   DDRB = (B111011); // PORTB 0,1,3,4,5 output, 2 input  
-  PORTB |= _BV(Inhibit4051); // port inhibit 4051 HIGH
+  PORTB |= _BV(Inhibit4051); // port inhibit CD4051 HIGH
   PORTB &= ~(_BV(APort) | _BV(BPort) | _BV(CPort) | _BV(ShiftPort) | _BV(IrInPin)); // port A, B, C, shift and IrInPin LOW
 
   TCNT0 = 0;            // Count up from 0
@@ -253,8 +253,8 @@ void loop() {
 
   if ((OutPortFlag == true) && (OffCounter >= OffInterval))  // if any output is high and time (OffInterval) has passed, switch all outputs to low
   {
-    PORTB |= _BV(Inhibit4051);
-    PORTB &= ~(_BV(APort) | _BV(BPort) | _BV(CPort) | _BV(ShiftPort));
+    PORTB |= _BV(Inhibit4051); // inhibit CD4051 to HIGH
+    PORTB &= ~(_BV(APort) | _BV(BPort) | _BV(CPort) | _BV(ShiftPort)); // A, B, C and Shift to LOW
     
     OutPortFlag = false;
   }
