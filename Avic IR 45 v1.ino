@@ -1,24 +1,29 @@
 /*
-   IR NEC protocol reader (38kHz, TSOPxxx) and 8 pin out for Pioneer AVIC-F840BT car stereo and Pioneer remote controller.
-   ATtiny2313, MCU Settings: FUSE_L=0xE4, FUSE_H=0xDF, FUSE_E=0xFF, F_CPU=8MHz internal 14CK+65 ms
+   IR NEC protocol reader (38kHz, TSOPxxx) and 8 pin out for Pioneer AVIC-F940BT car stereo and Pioneer remote controller.
+   ATtiny45, MCU Settings: FUSE_L=0xE4, FUSE_H=0xDF, FUSE_E=0xFF, F_CPU=8MHz internal 14CK+65 ms
 */
 
 #include <avr/io.h>
 #include <util/delay.h>
 #include <avr/interrupt.h>
 
-#define Resistor1k2 0  // 1k2 resistor connected to tip of 3.5mm jack and GND
-#define Resistor3k3 1  // 3k3 resistor connected to tip of 3.5mm jack and GND
-#define Resistor5k6 2  // 5k6 resistor connected to tip of 3.5mm jack and GND
-#define Resistor8k2 3  // 8k2 resistor connected to tip of 3.5mm jack and GND
-#define Resistor12k 4  // 12k resistor connected to tip of 3.5mm jack and GND
-#define Resistor15k 5  // 15k resistor connected to tip of 3.5mm jack and GND
-#define Resistor24k 6  // 24k resistor connected to tip of 3.5mm jack and GND
-#define Resistor68k 7  // 68k resistor connected to tip of 3.5mm jack and GND
-#define ShiftPort 8    // connected to ring of 3.5mm jack and GND
-#define Inhibit4051 16 // inhibit 4051
+// in , Vss, Vee to GND
+// out 0 1k2 resistor connected to tip of 3.5mm jack and GND B000XXX 
+// out 1 3k3 resistor connected to tip of 3.5mm jack and GND B001XXX 
+// out 2 5k6 resistor connected to tip of 3.5mm jack and GND B010XXX 
+// out 3 8k2 resistor connected to tip of 3.5mm jack and GND B011XXX 
+// out 4 12k resistor connected to tip of 3.5mm jack and GND B100XXX 
+// out 5 15k resistor connected to tip of 3.5mm jack and GND B101XXX 
+// out 6 24k resistor connected to tip of 3.5mm jack and GND B110XXX 
+// out 7 68k resistor connected to tip of 3.5mm jack and GND B111XXX 
 
-#define IrInPin PD2  // TSOP1338 out to pin PD2 INT0
+#define APort PB5    //  B1XXXXX
+#define BPort PB3    //  BXX1XXX
+#define CPort PB4    //  BX1XXXX
+#define ShiftPort PB1    // connected to ring of 3.5mm jack and GND BXXXX1X   
+#define Inhibit4051 PB0 // PB0 inhibit 4051 BXXXXX1
+
+#define IrInPin PB2  // TSOP1338 out to pin PB2 INT0
 
 #define IrSuccess (0)
 #define IrError (1)
@@ -160,7 +165,7 @@ void IrProcess() {
   counter = IrCounter;
   IrCounter = 0;
   // read IrInPin digital value (NOTE: logical inverse value = value ^ 1 due to sensor used)
-  value = (PIND & (1 << IrInPin)) > 0 ? Low : High;  // Low : High;
+  value = (PINB & (1 << IrInPin)) > 0 ? Low : High;  // Low : High;
 
   switch (IrEvent) {
     case IrEventIdle:  // awaiting for an initial signal
@@ -196,9 +201,13 @@ void IrProcess() {
   }
 }
 
-void OutPort(uint8_t OutPortB)  // out portB to 4051
+void OutPort(boolean bitC, boolean bitB, boolean bitA, boolean bitShift)  // out portB to 4051
 {
-  PORTB = (OutPortB);  
+  if (bitC) PORTB |= _BV(CPort);  
+  if (bitB) PORTB |= _BV(BPort);
+  if (bitA) PORTB |= _BV(APort);
+  if (bitShift) PORTB |= _BV(ShiftPort); 
+  PORTB &= ~(_BV(Inhibit4051));
 
   OutPortFlag = true;
   OffCounter = 0;
@@ -219,19 +228,17 @@ ISR(TIMER0_COMPA_vect) {
 
 void setup() {
   
-  DDRB = (B00011111); // PORTB 0,1,2,3,4 output
-  PORTB = (Inhibit4051); // PORTB4 (INH 4051 HIGH)
-
-  DDRD &= ~_BV(IrInPin);   // set IrInPin as INPUT (INT0)
-  PORTD &= ~_BV(IrInPin);  // set LOW level to IrInPin
+  DDRB = (B111011); // PORTB 0,1,3,4,5 output, 2 input  
+  PORTB |= _BV(Inhibit4051); // port inhibit 4051 HIGH
+  PORTB &= ~(_BV(APort) | _BV(BPort) | _BV(CPort) | _BV(ShiftPort) | _BV(IrInPin)); // port A, B, C, shift and IrInPin LOW
 
   TCNT0 = 0;            // Count up from 0
   TCCR0A = 2 << WGM00;  // CTC mode
 
   TCCR0B = (1 << CS00);  // Set prescaler to /1
 
-  GTCCR |= 1 << PSR10;  // Reset prescaler
-  OCR0A = 104;          // set OCR0n to get ~38.222kHz timer frequency, 104 for 8MHz
+  GTCCR |= 1 << PSR0;  // Reset prescaler
+  OCR0A = 104;          // set OCR0n to get ~38.222kHz timer frequency, 104 for 8MHz (104=(4MHz/38kHz)-1)
   TIFR = 1 << OCF0A;    // Clear output compare interrupt flag
 
   TIMSK |= 1 << OCIE0A;  // Enable output compare interrupt
@@ -246,8 +253,8 @@ void loop() {
 
   if ((OutPortFlag == true) && (OffCounter >= OffInterval))  // if any output is high and time (OffInterval) has passed, switch all outputs to low
   {
-    PORTB = (Inhibit4051);
-    //PORTB &= ~(_BV(Resistor1k2) | _BV(Resistor3k3) | _BV(Resistor5k6) | _BV(Resistor8k2) | _BV(Resistor12k) | _BV(Resistor15k) | _BV(Resistor24k) | _BV(Resistor68k));
+    PORTB |= _BV(Inhibit4051);
+    PORTB &= ~(_BV(APort) | _BV(BPort) | _BV(CPort) | _BV(ShiftPort));
     
     OutPortFlag = false;
   }
@@ -255,74 +262,74 @@ void loop() {
   // if IR read was a success then outup
   if (IrRead(&IrAddress, &IrCommand) == IrSuccess) {
 
-    if (IrAddress == AddressVolumeMinus && IrCommand == CommandVolumeMinus)  // volume -
+    if (IrAddress == AddressVolumeMinus && IrCommand == CommandVolumeMinus)  // volume - B110XXX
     {
-      OutPort(Resistor24k);
+      OutPort(true, true, false, false); 
     }
 
-    if (IrAddress == AddressVolumePlus && IrCommand == CommandVolumePlus)  // volume +
+    if (IrAddress == AddressVolumePlus && IrCommand == CommandVolumePlus)  // volume + B101XXX
     {
-      OutPort(Resistor15k);
+      OutPort(true, false, true, false);
     }
 
-    if (IrAddress == AddressBandEsc && IrCommand == CommandBandEsc)  // band /esc
+    if (IrAddress == AddressBandEsc && IrCommand == CommandBandEsc)  // band /esc B111XXX
     {
-      OutPort(Resistor68k);
+      OutPort(true, true, true, false);
     }
 
-    if (IrAddress == AddressMute && IrCommand == CommandMute)  // att sound
+    if (IrAddress == AddressMute && IrCommand == CommandMute)  // att sound B001XXX
     {
-      OutPort(Resistor3k3);
+      OutPort(false, false, true, false);
     }
 
-    if (IrAddress == AddressFunction && IrCommand == CommandFunction)  // phone menu
+    if (IrAddress == AddressFunction && IrCommand == CommandFunction)  // phone menu B000XXX + shift
     {
-      OutPort(Resistor1k2 + ShiftPort);
+      OutPort(false, false, false, true);
     }
 
-    if (IrAddress == AddressAudio && IrCommand == CommandAudio)  // phone off
+    if (IrAddress == AddressAudio && IrCommand == CommandAudio)  // phone off B010XXX + shift
     {
-      OutPort(Resistor5k6 + ShiftPort);
+      OutPort(false, true, false, true);
     }
 
-    if (IrAddress == AddressSrc && IrCommand == CommandSrc)  // src / 2sec OFF
+    if (IrAddress == AddressSrc && IrCommand == CommandSrc)  // src / 2sec OFF B000XXX
     {
-      OutPort(Resistor1k2);
+      OutPort(false, false, false, false);
     }
 
-    if (IrAddress == AddressPause && IrCommand == CommandPause)  // mute
+    if (IrAddress == AddressPause && IrCommand == CommandPause)  // mute B111XXX + shift
     {
-      OutPort(Resistor68k + ShiftPort);
+      OutPort(true, true, true, true);
     }
 
-    if (IrAddress == AddressDisplay && IrCommand == CommandDisplay)  // display
+    if (IrAddress == AddressDisplay && IrCommand == CommandDisplay)  // display B010XXX
     {
-      OutPort(Resistor5k6);
+      OutPort(false, true, false, false);
     }
 
-    if (IrAddress == AddressLeft && IrCommand == CommandLeft)  // left
+    if (IrAddress == AddressLeft && IrCommand == CommandLeft)  // left B100XXX
     {
-      OutPort(Resistor12k);
+      OutPort(true, false, false, false);
     }
 
-    if (IrAddress == AddressRight && IrCommand == CommandRight)  // right
+    if (IrAddress == AddressRight && IrCommand == CommandRight)  // right B011XXX
     {
-      OutPort(Resistor8k2);
+      OutPort(false, true, true, false);
     }
 
-    if (IrAddress == AddressUp && IrCommand == CommandUp)  // up
+    if (IrAddress == AddressUp && IrCommand == CommandUp)  // up B100XXX + shift
     {
-      OutPort(Resistor12k + ShiftPort);
+      OutPort(true, false, false, true);
     }
 
-    if (IrAddress == AddressDown && IrCommand == CommandDown)  // down
+    if (IrAddress == AddressDown && IrCommand == CommandDown)  // down B011XXX + shift
     {
-      OutPort(Resistor8k2 + ShiftPort);
+      OutPort(false, true, true, true);
     }
 
-    if (IrAddress == AddressEnter && IrCommand == CommandEnter)  // shift att sound
+    if (IrAddress == AddressEnter && IrCommand == CommandEnter)  // shift att sound  B110XXX + shift
     {
-      OutPort(Resistor24k + ShiftPort);
+      OutPort(true, true, false, true);
     }
 
     if (IrAddress == AddressRepeat && IrCommand == CommandRepeat)  // ****
