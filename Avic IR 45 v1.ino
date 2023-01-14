@@ -1,6 +1,6 @@
 /*
    IR NEC protocol reader (38kHz, TSOP1738) and 8 pin out for Pioneer AVIC-F940BT car stereo and Pioneer remote controller.
-   ATtiny45, MCU Settings: FUSE_L=0xE4, FUSE_H=0xDF, FUSE_E=0xFF, F_CPU=8MHz internal 14CK+65 ms
+   ATtiny45, MCU Settings: FUSE_L=0xE2, FUSE_H=0xDF, FUSE_E=0xFF, F_CPU=8MHz internal 14CK+65 ms
 */
 
 #include <avr/io.h>
@@ -8,20 +8,20 @@
 #include <avr/interrupt.h>
 
 // in , Vss, Vee to GND
-// out 0 1k2 resistor connected to tip of 3.5mm jack and GND B000XXX 
-// out 1 3k3 resistor connected to tip of 3.5mm jack and GND B001XXX 
-// out 2 5k6 resistor connected to tip of 3.5mm jack and GND B010XXX 
-// out 3 8k2 resistor connected to tip of 3.5mm jack and GND B011XXX 
-// out 4 12k resistor connected to tip of 3.5mm jack and GND B100XXX 
-// out 5 15k resistor connected to tip of 3.5mm jack and GND B101XXX 
-// out 6 24k resistor connected to tip of 3.5mm jack and GND B110XXX 
-// out 7 68k resistor connected to tip of 3.5mm jack and GND B111XXX 
+// out 0 1k2 resistor connected to tip of 3.5mm jack, B000 
+// out 1 3k3 resistor connected to tip of 3.5mm jack, B001 
+// out 2 5k6 resistor connected to tip of 3.5mm jack, B010 
+// out 3 8k2 resistor connected to tip of 3.5mm jack, B011 
+// out 4 12k resistor connected to tip of 3.5mm jack, B100 
+// out 5 15k resistor connected to tip of 3.5mm jack, B101 
+// out 6 24k resistor connected to tip of 3.5mm jack, B110 
+// out 7 68k resistor connected to tip of 3.5mm jack, B111 
 
-#define APort PB5    //  B1XXXXX
-#define BPort PB3    //  BXX1XXX
-#define CPort PB4    //  BX1XXXX
-#define ShiftPort PB1    // connected to ring of 3.5mm jack and GND BXXXX1X   
-#define Inhibit4051 PB0 // PB0 inhibit CD4051 BXXXXX1
+#define APort4051 PB5    //  BXX1
+#define BPort4051 PB3    //  BX1X
+#define CPort4051 PB4    //  B1XX
+#define ShiftPort PB1    // connected to ring of 3.5mm jack and GND   
+#define Inhibit4051 PB0  // PB0 inhibit CD4051
 
 #define IrInPin PB2  // TSOP1338 out to pin PB2 INT0
 
@@ -201,12 +201,13 @@ void IrProcess() {
   }
 }
 
-void OutPort(boolean bitC, boolean bitB, boolean bitA, boolean bitShift)  // out portB to 4051
+void OutPort(uint8_t OutPortBit)  // out portB to 4051 - shift,C,B,A
 {
-  if (bitC) PORTB |= _BV(CPort);  
-  if (bitB) PORTB |= _BV(BPort);
-  if (bitA) PORTB |= _BV(APort);
-  if (bitShift) PORTB |= _BV(ShiftPort); 
+  if ((OutPortBit & B00001000) >> 3) PORTB |= _BV(ShiftPort); // shift
+  if ((OutPortBit & B00000100) >> 2) PORTB |= _BV(CPort4051); // C on CD4051
+  if ((OutPortBit & B00000010) >> 1) PORTB |= _BV(BPort4051); // B on CD4051
+  if ( OutPortBit & B00000001)       PORTB |= _BV(APort4051); // A on CD4051
+   
   PORTB &= ~(_BV(Inhibit4051)); // inhibit CD4051 to LOW
 
   OutPortFlag = true;
@@ -230,7 +231,7 @@ void setup() {
   
   DDRB = (B111011); // PORTB 0,1,3,4,5 output, 2 input  
   PORTB |= _BV(Inhibit4051); // port inhibit CD4051 HIGH
-  PORTB &= ~(_BV(APort) | _BV(BPort) | _BV(CPort) | _BV(ShiftPort) | _BV(IrInPin)); // port A, B, C, shift and IrInPin LOW
+  PORTB &= ~(_BV(APort4051) | _BV(BPort4051) | _BV(CPort4051) | _BV(ShiftPort) | _BV(IrInPin)); // port A, B, C, shift and IrInPin LOW
 
   TCNT0 = 0;            // Count up from 0
   TCCR0A = 2 << WGM00;  // CTC mode
@@ -251,10 +252,10 @@ void setup() {
 
 void loop() {
 
-  if ((OutPortFlag == true) && (OffCounter >= OffInterval))  // if any output is high and time (OffInterval) has passed, switch all outputs to low
+  if ((OutPortFlag == true) && (OffCounter >= OffInterval))  // if any output to CD4051 is high and time (OffInterval) has passed, switch all outputs to low and inhibit to high
   {
     PORTB |= _BV(Inhibit4051); // inhibit CD4051 to HIGH
-    PORTB &= ~(_BV(APort) | _BV(BPort) | _BV(CPort) | _BV(ShiftPort)); // A, B, C and Shift to LOW
+    PORTB &= ~(_BV(APort4051) | _BV(BPort4051) | _BV(CPort4051) | _BV(ShiftPort)); // A, B, C and Shift to LOW
     
     OutPortFlag = false;
   }
@@ -262,74 +263,76 @@ void loop() {
   // if IR read was a success then outup
   if (IrRead(&IrAddress, &IrCommand) == IrSuccess) {
 
-    if (IrAddress == AddressVolumeMinus && IrCommand == CommandVolumeMinus)  // volume - B110XXX
+    // on address and command out shift, C, B, A
+
+    if (IrAddress == AddressVolumeMinus && IrCommand == CommandVolumeMinus)  // volume - B110
     {
-      OutPort(true, true, false, false); 
+      OutPort(B00000110); 
     }
 
-    if (IrAddress == AddressVolumePlus && IrCommand == CommandVolumePlus)  // volume + B101XXX
+    if (IrAddress == AddressVolumePlus && IrCommand == CommandVolumePlus)  // volume + B101
     {
-      OutPort(true, false, true, false);
+      OutPort(B00000101);
     }
 
-    if (IrAddress == AddressBandEsc && IrCommand == CommandBandEsc)  // band /esc B111XXX
+    if (IrAddress == AddressBandEsc && IrCommand == CommandBandEsc)  // band /esc B111
     {
-      OutPort(true, true, true, false);
+      OutPort(B00000111);
     }
 
-    if (IrAddress == AddressMute && IrCommand == CommandMute)  // att sound B001XXX
+    if (IrAddress == AddressMute && IrCommand == CommandMute)  // att sound B001
     {
-      OutPort(false, false, true, false);
+      OutPort(B00000001);
     }
 
-    if (IrAddress == AddressFunction && IrCommand == CommandFunction)  // phone menu B000XXX + shift
+    if (IrAddress == AddressFunction && IrCommand == CommandFunction)  // phone menu B000 + shift
     {
-      OutPort(false, false, false, true);
+      OutPort(B00001000);
     }
 
-    if (IrAddress == AddressAudio && IrCommand == CommandAudio)  // phone off B010XXX + shift
+    if (IrAddress == AddressAudio && IrCommand == CommandAudio)  // phone off B010 + shift
     {
-      OutPort(false, true, false, true);
+      OutPort(B00001010);
     }
 
-    if (IrAddress == AddressSrc && IrCommand == CommandSrc)  // src / 2sec OFF B000XXX
+    if (IrAddress == AddressSrc && IrCommand == CommandSrc)  // src / 2sec OFF B000
     {
-      OutPort(false, false, false, false);
+      OutPort(B00000000);
     }
 
-    if (IrAddress == AddressPause && IrCommand == CommandPause)  // mute B111XXX + shift
+    if (IrAddress == AddressPause && IrCommand == CommandPause)  // mute B111 + shift
     {
-      OutPort(true, true, true, true);
+      OutPort(B00001111);
     }
 
-    if (IrAddress == AddressDisplay && IrCommand == CommandDisplay)  // display B010XXX
+    if (IrAddress == AddressDisplay && IrCommand == CommandDisplay)  // display B010
     {
-      OutPort(false, true, false, false);
+      OutPort(B00000010);
     }
 
-    if (IrAddress == AddressLeft && IrCommand == CommandLeft)  // left B100XXX
+    if (IrAddress == AddressLeft && IrCommand == CommandLeft)  // left B100
     {
-      OutPort(true, false, false, false);
+      OutPort(B00000100);
     }
 
-    if (IrAddress == AddressRight && IrCommand == CommandRight)  // right B011XXX
+    if (IrAddress == AddressRight && IrCommand == CommandRight)  // right B011
     {
-      OutPort(false, true, true, false);
+      OutPort(B00000011);
     }
 
-    if (IrAddress == AddressUp && IrCommand == CommandUp)  // up B100XXX + shift
+    if (IrAddress == AddressUp && IrCommand == CommandUp)  // up B100 + shift
     {
-      OutPort(true, false, false, true);
+      OutPort(B00001100);
     }
 
-    if (IrAddress == AddressDown && IrCommand == CommandDown)  // down B011XXX + shift
+    if (IrAddress == AddressDown && IrCommand == CommandDown)  // down B011 + shift
     {
-      OutPort(false, true, true, true);
+      OutPort(B00001011);
     }
 
-    if (IrAddress == AddressEnter && IrCommand == CommandEnter)  // shift att sound  B110XXX + shift
+    if (IrAddress == AddressEnter && IrCommand == CommandEnter)  // shift att sound  B110 + shift
     {
-      OutPort(true, true, false, true);
+      OutPort(B00001110);
     }
 
     if (IrAddress == AddressRepeat && IrCommand == CommandRepeat)  // ****
